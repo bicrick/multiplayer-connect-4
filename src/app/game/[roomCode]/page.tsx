@@ -12,9 +12,11 @@ export default function Game() {
   const { roomCode } = useParams();
   const router = useRouter();
   const [game, setGame] = useState<any>(null);
-  const [username, setUsername] = useState(''); // TODO: Get from local storage or context
+  const [username, setUsername] = useState('');
   const [playerNumber, setPlayerNumber] = useState<1 | 2 | null>(null);
   const [error, setError] = useState('');
+  const [showJoinPrompt, setShowJoinPrompt] = useState(false);
+  const [joinUsername, setJoinUsername] = useState('');
 
   useEffect(() => {
     const storedUsername = localStorage.getItem('username') || '';
@@ -42,8 +44,26 @@ export default function Game() {
           return;
         }
 
-        setGame(data);
-        setPlayerNumber(data.player1_username === storedUsername ? 1 : 2);
+              setGame(data);
+      
+      // Check if user is already in the game
+      if (data.player1_username === storedUsername) {
+        setPlayerNumber(1);
+      } else if (data.player2_username === storedUsername) {
+        setPlayerNumber(2);
+      } else {
+        // User is not in the game - check if they can join
+        if (!data.player2_username && storedUsername) {
+          // Room has space and user has a stored username - auto join
+          handleAutoJoin(storedUsername);
+        } else if (!data.player2_username) {
+          // Room has space but no stored username - show join prompt
+          setShowJoinPrompt(true);
+        } else {
+          // Room is full
+          setError('This game room is full');
+        }
+      }
       } catch (err) {
         console.error('Fetch error:', err);
         setError(`Failed to load game: ${(err as Error).message}`);
@@ -68,6 +88,53 @@ export default function Game() {
       subscription.unsubscribe();
     };
   }, [roomCode]);
+
+  const handleAutoJoin = async (username: string) => {
+    try {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'join', username, roomCode }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      
+      // Update local state
+      setGame(data.game);
+      setPlayerNumber(2);
+      setShowJoinPrompt(false);
+    } catch (err) {
+      console.error('Auto join error:', err);
+      setError((err as Error).message);
+    }
+  };
+
+  const handleManualJoin = async () => {
+    if (!joinUsername.trim()) {
+      setError('Please enter a username');
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'join', username: joinUsername, roomCode }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      
+      // Store username and update state
+      localStorage.setItem('username', joinUsername);
+      setUsername(joinUsername);
+      setGame(data.game);
+      setPlayerNumber(2);
+      setShowJoinPrompt(false);
+    } catch (err) {
+      console.error('Join error:', err);
+      setError((err as Error).message);
+    }
+  };
 
   const handleMove = async (column: number) => {
     if (!game || game.winner !== null || game.current_turn !== playerNumber) {
@@ -95,8 +162,54 @@ export default function Game() {
     }
   };
 
-  if (error) return <div className="text-red-500">{error}</div>;
+  if (error) return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
+      <div className="text-red-500 text-xl mb-4">{error}</div>
+      <button
+        onClick={() => router.push('/')}
+        className="bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+      >
+        Back to Home
+      </button>
+    </div>
+  );
+  
   if (!game) return <div>Loading...</div>;
+
+  // Show join prompt if user needs to join
+  if (showJoinPrompt) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
+        <h1 className="text-3xl font-bold mb-4">Join Connect 4 Game</h1>
+        <div className="mb-4 p-3 bg-blue-100 rounded-lg">
+          <p className="text-lg font-semibold">Room Code: {roomCode}</p>
+          <p className="text-sm text-gray-600">Player 1: {game.player1_username} is waiting for you!</p>
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md">
+          <input
+            type="text"
+            placeholder="Enter your username"
+            value={joinUsername}
+            onChange={(e) => setJoinUsername(e.target.value)}
+            className="w-full p-2 mb-4 border rounded"
+            onKeyPress={(e) => e.key === 'Enter' && handleManualJoin()}
+          />
+          <button
+            onClick={handleManualJoin}
+            className="w-full bg-green-500 text-white p-2 rounded mb-4 hover:bg-green-600"
+          >
+            Join Game
+          </button>
+          <button
+            onClick={() => router.push('/')}
+            className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const { board, player1_username, player2_username, current_turn, winner } = game;
 
