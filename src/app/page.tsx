@@ -7,81 +7,140 @@ export default function Home() {
   const [username, setUsername] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleCreate = async () => {
-    if (!username) {
+    if (!username.trim()) {
       setError('Please enter a username');
       return;
     }
+    setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create', username }),
+        body: JSON.stringify({ action: 'create', username: username.trim() }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      localStorage.setItem('username', username);
+      localStorage.setItem('username', username.trim());
       router.push(`/game/${data.roomCode}`);
     } catch (err) {
       setError((err as Error).message);
+      setLoading(false);
     }
   };
 
   const handleJoin = async () => {
-    if (!username || !roomCode) {
+    if (!username.trim() || !roomCode.trim()) {
       setError('Please enter username and room code');
       return;
     }
+    setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'join', username, roomCode }),
+        body: JSON.stringify({ action: 'join', username: username.trim(), roomCode: roomCode.trim() }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      localStorage.setItem('username', username);
+      localStorage.setItem('username', username.trim());
       router.push(`/game/${roomCode}`);
     } catch (err) {
       setError((err as Error).message);
+      setLoading(false);
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-      <h1 className="text-4xl font-bold mb-8">Multiplayer Connect 4</h1>
-      <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md">
-        <input
-          type="text"
-          placeholder="Enter your username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          className="w-full p-2 mb-4 border rounded"
-        />
-        <button
-          onClick={handleCreate}
-          className="w-full bg-blue-500 text-white p-2 rounded mb-4 hover:bg-blue-600"
-        >
-          Create New Game
-        </button>
-        <div className="flex items-center mb-4">
-          <input
-            type="text"
-            placeholder="Enter room code"
-            value={roomCode}
-            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-            className="flex-1 p-2 border rounded mr-2"
-          />
-          <button
-            onClick={handleJoin}
-            className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
-          >
-            Join
-          </button>
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        {/* Simple Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-6xl font-bold text-white mb-2 tracking-wide font-mono">
+            CONNECT 4
+          </h1>
+          <p className="text-gray-400 text-sm uppercase tracking-wider">
+            Multiplayer
+          </p>
         </div>
-        {error && <p className="text-red-500 text-center">{error}</p>}
+
+        {/* Simple Panel */}
+        <div className="bg-gray-900 border border-gray-700 rounded p-6">
+          {/* Username Input */}
+          <div className="mb-4">
+            <label className="block text-gray-300 text-xs font-bold mb-2 uppercase">
+              Player Name
+            </label>
+            <input
+              type="text"
+              placeholder="Enter name"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors"
+              disabled={loading}
+            />
+          </div>
+
+          {/* Create Game Button */}
+          <button
+            onClick={handleCreate}
+            disabled={loading}
+            className="w-full bg-white text-black font-bold py-3 px-4 rounded hover:bg-gray-200 transition-colors disabled:opacity-50 mb-4"
+          >
+            {loading ? (
+              <div className="flex items-center justify-center">
+                <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin mr-2"></div>
+                Creating...
+              </div>
+            ) : (
+              'Create Game'
+            )}
+          </button>
+
+          {/* Simple Divider */}
+          <div className="flex items-center mb-4">
+            <div className="flex-1 border-t border-gray-700"></div>
+            <span className="px-3 text-gray-500 text-xs uppercase">or</span>
+            <div className="flex-1 border-t border-gray-700"></div>
+          </div>
+
+          {/* Join Game Section */}
+          <div className="mb-4">
+            <label className="block text-gray-300 text-xs font-bold mb-2 uppercase">
+              Room Code
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="ABC123"
+                value={roomCode}
+                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                className="flex-1 p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors font-mono"
+                disabled={loading}
+                maxLength={6}
+              />
+              <button
+                onClick={handleJoin}
+                disabled={loading}
+                className="bg-gray-700 text-white font-bold px-4 py-3 rounded hover:bg-gray-600 transition-colors disabled:opacity-50"
+              >
+                Join
+              </button>
+            </div>
+          </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="bg-red-900 border border-red-700 text-red-100 px-3 py-2 rounded text-sm">
+              {error}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -52,5 +52,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ game: updated[0] });
   }
 
+  if (action === 'reset') {
+    const { data, error } = await supabase
+      .from('games')
+      .select('*')
+      .eq('room_code', roomCode)
+      .single();
+
+    if (error || !data) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+
+    // Reset the game board and turn, but keep players
+    const initialBoard = Array(6).fill(null).map(() => Array(7).fill(0));
+    const { data: updated, error: updateError } = await supabase
+      .from('games')
+      .update({ 
+        board: initialBoard,
+        current_turn: 1,
+        winner: null
+      })
+      .eq('room_code', roomCode)
+      .select();
+
+    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
+    return NextResponse.json({ game: updated[0] });
+  }
+
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 }

@@ -1,26 +1,149 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+
+// Extend Window interface for WebKit audio context
+declare global {
+  interface Window {
+    webkitAudioContext: typeof AudioContext;
+  }
+}
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
+import LoadingScreen from '@/components/LoadingScreen';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+interface GameState {
+  board: number[][];
+  player1_username: string;
+  player2_username: string | null;
+  current_turn: 1 | 2;
+  winner: number | null;
+  room_code: string;
+}
+
 export default function Game() {
   const { roomCode } = useParams();
   const router = useRouter();
-  const [game, setGame] = useState<any>(null);
-  const [username, setUsername] = useState('');
+  const [game, setGame] = useState<GameState | null>(null);
   const [playerNumber, setPlayerNumber] = useState<1 | 2 | null>(null);
   const [error, setError] = useState('');
   const [showJoinPrompt, setShowJoinPrompt] = useState(false);
   const [joinUsername, setJoinUsername] = useState('');
+  const [lastMove, setLastMove] = useState<{row: number, col: number, timestamp: number} | null>(null);
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+
+  // Initialize audio context
+  useEffect(() => {
+    const initAudio = () => {
+      if (typeof window !== 'undefined' && !audioContext) {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        setAudioContext(ctx);
+      }
+    };
+    initAudio();
+  }, [audioContext]);
+
+  // Sound effect functions
+  const playSound = useCallback((frequency: number, duration: number, type: OscillatorType = 'sine', volume: number = 0.1) => {
+    if (!audioContext) return;
+    
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    oscillator.type = type;
+    
+    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    gainNode.gain.linearRampToValueAtTime(volume, audioContext.currentTime + 0.01);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + duration);
+  }, [audioContext]);
+
+  const playPlaceSound = useCallback(() => {
+    // Pleasant "plop" sound
+    playSound(400, 0.15, 'sine', 0.15);
+    setTimeout(() => playSound(300, 0.1, 'sine', 0.1), 50);
+  }, [playSound]);
+
+  const playBlockedSound = useCallback(() => {
+    // Buzzer sound
+    playSound(150, 0.3, 'square', 0.08);
+  }, [playSound]);
+
+  const playWinSound = useCallback(() => {
+    // Victory fanfare
+    const notes = [523, 659, 784, 1047]; // C, E, G, C (major chord)
+    notes.forEach((note, i) => {
+      setTimeout(() => playSound(note, 0.4, 'triangle', 0.12), i * 100);
+    });
+  }, [playSound]);
+
+  const playLoseSound = useCallback(() => {
+    // Descending sad sound
+    const notes = [400, 350, 300, 250];
+    notes.forEach((note, i) => {
+      setTimeout(() => playSound(note, 0.3, 'triangle', 0.08), i * 150);
+    });
+  }, [playSound]);
+
+  const playResetSound = useCallback(() => {
+    // Fresh start sound - ascending notes
+    const notes = [300, 400, 500];
+    notes.forEach((note, i) => {
+      setTimeout(() => playSound(note, 0.2, 'triangle', 0.1), i * 80);
+    });
+  }, [playSound]);
+
+  const handleResetGame = async () => {
+    try {
+      playResetSound();
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset', roomCode }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      
+      setLastMove(null); // Clear any highlighting
+      // The real-time subscription will handle the update
+    } catch (err) {
+      console.error('Reset error:', err);
+      setError((err as Error).message);
+    }
+  };
+
+  const handleAutoJoin = useCallback(async (username: string) => {
+    try {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'join', username, roomCode }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      
+      // Update local state
+      setGame(data.game as GameState);
+      setPlayerNumber(2);
+      setShowJoinPrompt(false);
+    } catch (err) {
+      console.error('Auto join error:', err);
+      setError((err as Error).message);
+    }
+  }, [roomCode]);
 
   useEffect(() => {
     const storedUsername = localStorage.getItem('username') || '';
-    setUsername(storedUsername);
 
     const fetchGame = async () => {
       try {
@@ -44,7 +167,7 @@ export default function Game() {
           return;
         }
 
-              setGame(data);
+              setGame(data as GameState);
       
       // Check if user is already in the game
       if (data.player1_username === storedUsername) {
@@ -79,7 +202,39 @@ export default function Game() {
         { event: 'UPDATE', schema: 'public', table: 'games', filter: `room_code=eq.${roomCode}` },
         (payload) => {
           console.log('Real-time update received:', payload);
-          setGame(payload.new);
+          const newGame = payload.new as GameState;
+          
+          // Detect if this is a new move by comparing board states
+          if (game && newGame.board) {
+            for (let row = 0; row < newGame.board.length; row++) {
+              for (let col = 0; col < newGame.board[row].length; col++) {
+                if (game.board[row][col] !== newGame.board[row][col] && newGame.board[row][col] !== 0) {
+                  // Found the new piece - highlight it briefly
+                  setLastMove({ row, col, timestamp: Date.now() });
+                  setTimeout(() => setLastMove(null), 1500);
+                  
+                  // If it wasn't our move, play the place sound
+                  if (newGame.board[row][col] !== playerNumber) {
+                    playPlaceSound();
+                  }
+                  break;
+                }
+              }
+            }
+          }
+          
+          // Check for game end and play win/lose sounds
+          if (newGame.winner !== null && game?.winner === null) {
+            if (newGame.winner === 0) {
+              // Tie - no sound for now
+            } else if (newGame.winner === playerNumber) {
+              setTimeout(() => playWinSound(), 300);
+            } else {
+              setTimeout(() => playLoseSound(), 300);
+            }
+          }
+          
+          setGame(newGame);
         }
       )
       .subscribe();
@@ -87,27 +242,7 @@ export default function Game() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [roomCode]);
-
-  const handleAutoJoin = async (username: string) => {
-    try {
-      const res = await fetch('/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'join', username, roomCode }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      
-      // Update local state
-      setGame(data.game);
-      setPlayerNumber(2);
-      setShowJoinPrompt(false);
-    } catch (err) {
-      console.error('Auto join error:', err);
-      setError((err as Error).message);
-    }
-  };
+  }, [roomCode, handleAutoJoin, game, playLoseSound, playPlaceSound, playWinSound, playerNumber]);
 
   const handleManualJoin = async () => {
     if (!joinUsername.trim()) {
@@ -126,8 +261,7 @@ export default function Game() {
       
       // Store username and update state
       localStorage.setItem('username', joinUsername);
-      setUsername(joinUsername);
-      setGame(data.game);
+      setGame(data.game as GameState);
       setPlayerNumber(2);
       setShowJoinPrompt(false);
     } catch (err) {
@@ -136,11 +270,24 @@ export default function Game() {
     }
   };
 
+  const playClickSound = useCallback(() => {
+    // Subtle click sound
+    playSound(800, 0.05, 'sine', 0.05);
+  }, [playSound]);
+
   const handleMove = async (column: number) => {
-    if (!game || game.winner !== null || game.current_turn !== playerNumber) {
-      console.log('Move blocked:', { game: !!game, winner: game?.winner, currentTurn: game?.current_turn, playerNumber });
+    if (!game || game.winner !== null) {
+      console.log('Game is over');
       return;
     }
+    
+    if (game.current_turn !== playerNumber) {
+      console.log('Not your turn');
+      playBlockedSound(); // Play blocked sound for wrong turn
+      return;
+    }
+
+    playClickSound(); // Immediate feedback for valid move
 
     try {
       console.log('Making move:', { column, player: playerNumber, roomCode });
@@ -152,7 +299,12 @@ export default function Game() {
       const data = await res.json();
       console.log('Move response:', data);
       
-      if (data.error) throw new Error(data.error);
+      if (data.error) {
+        playBlockedSound(); // Play blocked sound for server errors (like column full)
+        throw new Error(data.error);
+      }
+      
+      playPlaceSound(); // Play placement sound
       
       // Real-time subscription will handle the update automatically
       
@@ -163,49 +315,68 @@ export default function Game() {
   };
 
   if (error) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-      <div className="text-red-500 text-xl mb-4">{error}</div>
-      <button
-        onClick={() => router.push('/')}
-        className="bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
-      >
-        Back to Home
-      </button>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-black p-4">
+      <div className="bg-gray-900 border border-gray-700 rounded p-6 text-center">
+        <div className="text-red-400 text-xl mb-4">{error}</div>
+        <button
+          onClick={() => router.push('/')}
+          className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition-colors"
+        >
+          Back to Home
+        </button>
+      </div>
     </div>
   );
   
-  if (!game) return <div>Loading...</div>;
+  if (!game) return <LoadingScreen message="Loading game..." />;
 
   // Show join prompt if user needs to join
   if (showJoinPrompt) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-        <h1 className="text-3xl font-bold mb-4">Join Connect 4 Game</h1>
-        <div className="mb-4 p-3 bg-blue-100 rounded-lg">
-          <p className="text-lg font-semibold">Room Code: {roomCode}</p>
-          <p className="text-sm text-gray-600">Player 1: {game.player1_username} is waiting for you!</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md">
-          <input
-            type="text"
-            placeholder="Enter your username"
-            value={joinUsername}
-            onChange={(e) => setJoinUsername(e.target.value)}
-            className="w-full p-2 mb-4 border rounded"
-            onKeyPress={(e) => e.key === 'Enter' && handleManualJoin()}
-          />
-          <button
-            onClick={handleManualJoin}
-            className="w-full bg-green-500 text-white p-2 rounded mb-4 hover:bg-green-600"
-          >
-            Join Game
-          </button>
-          <button
-            onClick={() => router.push('/')}
-            className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
-          >
-            Back to Home
-          </button>
+      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <h1 className="text-6xl font-bold text-white mb-2 tracking-wide font-mono">
+              CONNECT 4
+            </h1>
+            <div className="bg-gray-900 border border-gray-700 rounded p-4 mb-4">
+              <p className="text-white text-lg font-semibold">Room: {roomCode}</p>
+              <p className="text-gray-400 text-sm">{game.player1_username} is waiting for you!</p>
+            </div>
+          </div>
+
+          {/* Join Card */}
+          <div className="bg-gray-900 border border-gray-700 rounded p-6">
+            <div className="mb-4">
+              <label className="block text-gray-300 text-xs font-bold mb-2 uppercase">
+                Player Name
+              </label>
+              <input
+                type="text"
+                placeholder="Enter your name"
+                value={joinUsername}
+                onChange={(e) => setJoinUsername(e.target.value)}
+                className="w-full p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors"
+                onKeyPress={(e) => e.key === 'Enter' && handleManualJoin()}
+                autoFocus
+              />
+            </div>
+
+            <button
+              onClick={handleManualJoin}
+              className="w-full bg-white text-black font-bold py-3 px-4 rounded hover:bg-gray-200 transition-colors mb-4"
+            >
+              Join Game
+            </button>
+
+            <button
+              onClick={() => router.push('/')}
+              className="w-full bg-gray-700 text-white font-bold px-4 py-3 rounded hover:bg-gray-600 transition-colors"
+            >
+              Back to Home
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -214,40 +385,162 @@ export default function Game() {
   const { board, player1_username, player2_username, current_turn, winner } = game;
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-      <h1 className="text-3xl font-bold mb-4">Connect 4</h1>
-      <div className="mb-4 p-3 bg-blue-100 rounded-lg">
-        <p className="text-lg font-semibold">Room Code: {roomCode}</p>
-        <p className="text-sm text-gray-600">Share this code with your friend!</p>
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4">
+      {/* Header */}
+      <div className="text-center mb-6">
+        <h1 className="text-5xl font-bold text-white mb-2 font-mono tracking-wider">
+          CONNECT 4
+        </h1>
+        <div className="bg-gray-900 border border-gray-700 rounded px-4 py-2 inline-block">
+          <p className="text-white font-mono text-sm">Room: {roomCode}</p>
+          <p className="text-gray-400 text-xs">Share this code with your friend!</p>
+        </div>
       </div>
-      <p className="mb-2">Player 1: {player1_username} (Red)</p>
-      <p className="mb-2">Player 2: {player2_username || 'Waiting...'} (Yellow)</p>
-      <p className="mb-4 text-lg font-semibold">Current Turn: Player {current_turn}</p>
-      {winner !== null && (
-        <p className="text-2xl font-bold mb-4">
-          {winner === 0 ? 'Tie!' : `Player ${winner} Wins!`}
-        </p>
-      )}
-      <div className="grid grid-cols-7 gap-1 bg-blue-500 p-2 rounded">
-        {board[0].map((_: any, col: number) => (
-          <div key={col} className="flex flex-col">
-            {board.map((row: number[], rowIdx: number) => (
-              <div
-                key={rowIdx}
-                onClick={() => handleMove(col)}
-                className={`w-12 h-12 rounded-full cursor-pointer ${
-                  row[col] === 0 ? 'bg-white' : row[col] === 1 ? 'bg-red-500' : 'bg-yellow-500'
-                }`}
-              />
-            ))}
+
+      {/* Game Status & Turn Indicator */}
+      <div className="w-full max-w-2xl mb-6">
+        {winner !== null ? (
+          <div className="text-center">
+            <div className="bg-white text-black font-bold text-2xl py-4 rounded border-2 border-gray-300 mb-4">
+              {winner === 0 ? 'TIE GAME!' : `${winner === 1 ? player1_username : player2_username} WINS!`}
+            </div>
+            <button
+              onClick={handleResetGame}
+              className="bg-gray-700 hover:bg-gray-600 text-white font-mono font-bold py-3 px-6 rounded transition-colors"
+            >
+              PLAY AGAIN
+            </button>
           </div>
-        ))}
+        ) : (
+          <div className="flex justify-between items-center bg-gray-900 border border-gray-700 rounded p-4">
+            {/* Player 1 */}
+            <div className={`flex items-center space-x-3 p-3 rounded transition-all duration-300 ${
+              current_turn === 1 
+                ? 'bg-gray-800 border border-gray-600' 
+                : 'bg-gray-900 opacity-60'
+            }`}>
+              <div className="w-8 h-8 bg-red-500 rounded-full border-2 border-red-400"></div>
+              <div>
+                <p className="text-white font-bold text-lg">{player1_username}</p>
+                <p className="text-gray-400 text-sm font-mono">RED</p>
+                {current_turn !== 1 && playerNumber === 1 && (
+                  <p className="text-gray-500 text-xs italic">Wait your turn</p>
+                )}
+              </div>
+              {current_turn === 1 && (
+                <div className="ml-2 text-white animate-pulse">
+                  <span className="text-2xl">▶</span>
+                </div>
+              )}
+            </div>
+
+            {/* VS */}
+            <div className="text-gray-400 font-mono text-xl font-bold">VS</div>
+
+            {/* Player 2 */}
+            <div className={`flex items-center space-x-3 p-3 rounded transition-all duration-300 ${
+              current_turn === 2 
+                ? 'bg-gray-800 border border-gray-600' 
+                : 'bg-gray-900 opacity-60'
+            }`}>
+              {current_turn === 2 && (
+                <div className="mr-2 text-white animate-pulse">
+                  <span className="text-2xl">◀</span>
+                </div>
+              )}
+              <div className="text-right">
+                <p className="text-white font-bold text-lg">{player2_username || 'Waiting...'}</p>
+                <p className="text-gray-400 text-sm font-mono">YELLOW</p>
+                {current_turn !== 2 && playerNumber === 2 && (
+                  <p className="text-gray-500 text-xs italic">Wait your turn</p>
+                )}
+              </div>
+              <div className="w-8 h-8 bg-yellow-500 rounded-full border-2 border-yellow-400"></div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Game Board */}
+      <div className="bg-blue-600 p-3 rounded-xl border-4 border-blue-400 shadow-2xl mb-6 relative overflow-hidden">
+        {/* Noise/static overlay */}
+        <div className="absolute inset-0 opacity-10 pointer-events-none">
+          <div className="w-full h-full" style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.4'%3E%3Cpath d='m0 40l40-40h-40v40'/%3E%3C/g%3E%3C/svg%3E")`,
+            backgroundSize: '8px 8px',
+            animation: 'noise 0.5s infinite'
+          }}></div>
+        </div>
+        
+        <div className="grid grid-cols-7 gap-2 relative z-10">
+          {board[0].map((_: number, col: number) => (
+            <div key={col} className="flex flex-col gap-2 relative">
+              {board.map((row: number[], rowIdx: number) => {
+                const piece = row[col];
+                const isLastMove = lastMove && lastMove.row === rowIdx && lastMove.col === col;
+                const isMyTurn = game.winner === null && game.current_turn === playerNumber;
+                const isNotMyTurn = game.winner === null && game.current_turn !== playerNumber && playerNumber !== null;
+                
+                // Determine hover styles based on game state
+                let hoverStyles = '';
+                let cursorStyle = 'cursor-pointer';
+                
+                if (piece === 0) { // Empty slot
+                  if (isMyTurn) {
+                    hoverStyles = 'hover:shadow-xl hover:bg-gradient-to-br hover:from-white hover:to-gray-100 hover:scale-105';
+                    cursorStyle = 'cursor-pointer';
+                  } else if (isNotMyTurn) {
+                    hoverStyles = 'hover:bg-red-100 hover:border-red-400 hover:shadow-lg hover:shadow-red-500/30';
+                    cursorStyle = 'cursor-not-allowed';
+                  } else {
+                    cursorStyle = 'cursor-default';
+                  }
+                } else {
+                  cursorStyle = 'cursor-default';
+                }
+                
+                return (
+                  <div
+                    key={rowIdx}
+                    onClick={() => handleMove(col)}
+                    className={`w-14 h-14 rounded-full border-2 transition-all duration-300 relative ${
+                      piece === 0 
+                        ? `bg-white border-gray-300 ${hoverStyles}` 
+                        : piece === 1 
+                          ? `bg-red-500 border-red-400 shadow-lg shadow-red-500/50 ${isLastMove ? 'ring-4 ring-red-300 ring-opacity-75 scale-110' : ''}` 
+                          : `bg-yellow-500 border-yellow-400 shadow-lg shadow-yellow-500/50 ${isLastMove ? 'ring-4 ring-yellow-300 ring-opacity-75 scale-110' : ''}`
+                    } ${cursorStyle}`}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+      
+      <style jsx>{`
+        @keyframes noise {
+          0%, 100% {
+            transform: translate(0, 0);
+          }
+          25% {
+            transform: translate(1px, 1px);
+          }
+          50% {
+            transform: translate(-1px, 1px);
+          }
+          75% {
+            transform: translate(1px, -1px);
+          }
+        }
+      `}</style>
+
+      {/* Back Button */}
       <button
         onClick={() => router.push('/')}
-        className="mt-4 bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+        className="bg-gray-700 hover:bg-gray-600 text-white font-mono font-bold py-3 px-6 rounded border border-gray-600 transition-colors"
       >
-        Back to Home
+        ← BACK TO HOME
       </button>
     </div>
   );
