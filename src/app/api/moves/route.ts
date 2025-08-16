@@ -85,7 +85,11 @@ export async function POST(request: Request) {
     const isWin = checkWin(newBoard, player);
     const isTie = !isWin && checkTie(newBoard);
 
-    const updateData: any = {
+    const updateData: {
+      board: number[][];
+      current_turn: number;
+      winner?: number;
+    } = {
       board: newBoard,
       current_turn: player === 1 ? 2 : 1,
     };
@@ -102,6 +106,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ game: updated[0] });
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Unknown error' }, { status: 400 });
   }
 }

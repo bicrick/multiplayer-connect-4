@@ -415,8 +415,22 @@ export default function Game() {
               CONNECT 4
             </h1>
             <div className="bg-gray-900 border border-gray-700 rounded p-4 mb-4">
-              <p className="text-white text-lg font-semibold">Room: {roomCode}</p>
-              <p className="text-gray-400 text-sm">{game.player1_username} is waiting for you!</p>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-white text-lg font-semibold">Room: {roomCode}</p>
+                  <p className="text-gray-400 text-sm">{game.player1_username} is waiting for you!</p>
+                </div>
+                <button
+                  onClick={copyGameUrl}
+                  className={`px-3 py-2 rounded-md font-mono text-xs transition-all duration-200 ${
+                    copySuccess 
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                  }`}
+                >
+                  {copySuccess ? '✓ Copied!' : '📋 Copy Link'}
+                </button>
+              </div>
             </div>
           </div>
 
