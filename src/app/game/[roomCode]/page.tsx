@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 // Extend Window interface for WebKit audio context
 declare global {
@@ -35,6 +35,12 @@ export default function Game() {
   const [joinUsername, setJoinUsername] = useState('');
   const [lastMove, setLastMove] = useState<{row: number, col: number, timestamp: number} | null>(null);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const soundFunctionsRef = useRef<{
+    playPlaceSound: () => void;
+    playWinSound: () => void;
+    playLoseSound: () => void;
+  } | null>(null);
 
   // Initialize audio context
   useEffect(() => {
@@ -95,6 +101,15 @@ export default function Game() {
     });
   }, [playSound]);
 
+  // Update refs whenever sound functions change
+  useEffect(() => {
+    soundFunctionsRef.current = {
+      playPlaceSound,
+      playWinSound,
+      playLoseSound
+    };
+  }, [playPlaceSound, playWinSound, playLoseSound]);
+
   const playResetSound = useCallback(() => {
     // Fresh start sound - ascending notes
     const notes = [300, 400, 500];
@@ -135,6 +150,7 @@ export default function Game() {
       // Update local state
       setGame(data.game as GameState);
       setPlayerNumber(2);
+      localStorage.setItem('playerNumber', '2');
       setShowJoinPrompt(false);
     } catch (err) {
       console.error('Auto join error:', err);
@@ -147,7 +163,7 @@ export default function Game() {
 
     const fetchGame = async () => {
       try {
-        console.log('Fetching game for room:', roomCode);
+        console.log('Initial fetch for room:', roomCode);
         const { data, error } = await supabase
           .from('games')
           .select('*')
@@ -167,26 +183,28 @@ export default function Game() {
           return;
         }
 
-              setGame(data as GameState);
+        setGame(data as GameState);
       
-      // Check if user is already in the game
-      if (data.player1_username === storedUsername) {
-        setPlayerNumber(1);
-      } else if (data.player2_username === storedUsername) {
-        setPlayerNumber(2);
-      } else {
-        // User is not in the game - check if they can join
-        if (!data.player2_username && storedUsername) {
-          // Room has space and user has a stored username - auto join
-          handleAutoJoin(storedUsername);
-        } else if (!data.player2_username) {
-          // Room has space but no stored username - show join prompt
-          setShowJoinPrompt(true);
+        // Check if user is already in the game
+        if (data.player1_username === storedUsername) {
+          setPlayerNumber(1);
+          localStorage.setItem('playerNumber', '1');
+        } else if (data.player2_username === storedUsername) {
+          setPlayerNumber(2);
+          localStorage.setItem('playerNumber', '2');
         } else {
-          // Room is full
-          setError('This game room is full');
+          // User is not in the game - check if they can join
+          if (!data.player2_username && storedUsername) {
+            // Room has space and user has a stored username - auto join
+            handleAutoJoin(storedUsername);
+          } else if (!data.player2_username) {
+            // Room has space but no stored username - show join prompt
+            setShowJoinPrompt(true);
+          } else {
+            // Room is full
+            setError('This game room is full');
+          }
         }
-      }
       } catch (err) {
         console.error('Fetch error:', err);
         setError(`Failed to load game: ${(err as Error).message}`);
@@ -204,37 +222,47 @@ export default function Game() {
           console.log('Real-time update received:', payload);
           const newGame = payload.new as GameState;
           
-          // Detect if this is a new move by comparing board states
-          if (game && newGame.board) {
-            for (let row = 0; row < newGame.board.length; row++) {
-              for (let col = 0; col < newGame.board[row].length; col++) {
-                if (game.board[row][col] !== newGame.board[row][col] && newGame.board[row][col] !== 0) {
-                  // Found the new piece - highlight it briefly
-                  setLastMove({ row, col, timestamp: Date.now() });
-                  setTimeout(() => setLastMove(null), 1500);
-                  
-                  // If it wasn't our move, play the place sound
-                  if (newGame.board[row][col] !== playerNumber) {
-                    playPlaceSound();
+          // Use a ref to get current game state to avoid stale closure
+          setGame((currentGame) => {
+            // Detect if this is a new move by comparing board states
+            if (currentGame && newGame.board) {
+              for (let row = 0; row < newGame.board.length; row++) {
+                for (let col = 0; col < newGame.board[row].length; col++) {
+                  if (currentGame.board[row][col] !== newGame.board[row][col] && newGame.board[row][col] !== 0) {
+                    // Found the new piece - highlight it briefly
+                    setLastMove({ row, col, timestamp: Date.now() });
+                    setTimeout(() => setLastMove(null), 1500);
+                    
+                    // If it wasn't our move, play the place sound
+                    const currentPlayerNumber = localStorage.getItem('playerNumber');
+                    if (currentPlayerNumber && parseInt(currentPlayerNumber) !== newGame.board[row][col]) {
+                      soundFunctionsRef.current?.playPlaceSound();
+                    }
+                    break;
                   }
-                  break;
                 }
               }
             }
-          }
-          
-          // Check for game end and play win/lose sounds
-          if (newGame.winner !== null && game?.winner === null) {
-            if (newGame.winner === 0) {
-              // Tie - no sound for now
-            } else if (newGame.winner === playerNumber) {
-              setTimeout(() => playWinSound(), 300);
-            } else {
-              setTimeout(() => playLoseSound(), 300);
+            
+            // Check for game end and play win/lose sounds
+            if (newGame.winner !== null && currentGame?.winner === null) {
+              if (newGame.winner === 0) {
+                // Tie - no sound for now
+              } else {
+                // Play win/lose sound based on stored player number
+                setTimeout(() => {
+                  const currentPlayerNumber = localStorage.getItem('playerNumber');
+                  if (currentPlayerNumber && parseInt(currentPlayerNumber) === newGame.winner) {
+                    soundFunctionsRef.current?.playWinSound();
+                  } else {
+                    soundFunctionsRef.current?.playLoseSound();
+                  }
+                }, 300);
+              }
             }
-          }
-          
-          setGame(newGame);
+            
+            return newGame;
+          });
         }
       )
       .subscribe();
@@ -242,7 +270,7 @@ export default function Game() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [roomCode, handleAutoJoin, game, playLoseSound, playPlaceSound, playWinSound, playerNumber]);
+  }, [roomCode, handleAutoJoin]); // Only depend on stable values
 
   const handleManualJoin = async () => {
     if (!joinUsername.trim()) {
@@ -263,6 +291,7 @@ export default function Game() {
       localStorage.setItem('username', joinUsername);
       setGame(data.game as GameState);
       setPlayerNumber(2);
+      localStorage.setItem('playerNumber', '2');
       setShowJoinPrompt(false);
     } catch (err) {
       console.error('Join error:', err);
@@ -275,15 +304,49 @@ export default function Game() {
     playSound(800, 0.05, 'sine', 0.05);
   }, [playSound]);
 
+  const copyGameUrl = async () => {
+    try {
+      const gameUrl = window.location.href;
+      await navigator.clipboard.writeText(gameUrl);
+      setCopySuccess(true);
+      playClickSound(); // Play click sound for feedback
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = window.location.href;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+      } catch (fallbackErr) {
+        console.error('Fallback copy failed:', fallbackErr);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
   const handleMove = async (column: number) => {
+    // Silent validation - don't show errors for expected user behavior
     if (!game || game.winner !== null) {
-      console.log('Game is over');
+      console.log('Game is over - ignoring click');
       return;
     }
     
-    if (game.current_turn !== playerNumber) {
-      console.log('Not your turn');
-      playBlockedSound(); // Play blocked sound for wrong turn
+    if (game.current_turn !== playerNumber || playerNumber === null) {
+      console.log('Not your turn - ignoring click');
+      playBlockedSound(); // Just play sound feedback, no error
+      return;
+    }
+
+    // Check if column is full before making server call
+    const topRow = game.board[0];
+    if (topRow[column] !== 0) {
+      console.log('Column is full - ignoring click');
+      playBlockedSound();
       return;
     }
 
@@ -300,8 +363,18 @@ export default function Game() {
       console.log('Move response:', data);
       
       if (data.error) {
-        playBlockedSound(); // Play blocked sound for server errors (like column full)
-        throw new Error(data.error);
+        // Handle expected errors gracefully without setting error state
+        if (data.error.includes('Not your turn') || data.error.includes('Column full')) {
+          console.log('Server validation:', data.error);
+          playBlockedSound();
+          return; // Don't show error UI for these expected cases
+        }
+        
+        // Only set error state for unexpected server errors
+        console.error('Unexpected server error:', data.error);
+        playBlockedSound();
+        setError(data.error);
+        return;
       }
       
       playPlaceSound(); // Play placement sound
@@ -309,8 +382,9 @@ export default function Game() {
       // Real-time subscription will handle the update automatically
       
     } catch (err) {
-      console.error('Move error:', err);
-      setError((err as Error).message);
+      console.error('Network/request error:', err);
+      // Only show error UI for network issues, not game logic issues
+      setError('Connection error. Please try again.');
     }
   };
 
@@ -391,9 +465,23 @@ export default function Game() {
         <h1 className="text-5xl font-bold text-white mb-2 font-mono tracking-wider">
           CONNECT 4
         </h1>
-        <div className="bg-gray-900 border border-gray-700 rounded px-4 py-2 inline-block">
-          <p className="text-white font-mono text-sm">Room: {roomCode}</p>
-          <p className="text-gray-400 text-xs">Share this code with your friend!</p>
+        <div className="bg-gray-900 border border-gray-700 rounded px-4 py-3 inline-block">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-white font-mono text-sm">Room: {roomCode}</p>
+              <p className="text-gray-400 text-xs">Share this link with your friend!</p>
+            </div>
+            <button
+              onClick={copyGameUrl}
+              className={`px-3 py-2 rounded-md font-mono text-xs transition-all duration-200 ${
+                copySuccess 
+                  ? 'bg-green-600 text-white' 
+                  : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+              }`}
+            >
+              {copySuccess ? '✓ Copied!' : '📋 Copy Link'}
+            </button>
+          </div>
         </div>
       </div>
 
