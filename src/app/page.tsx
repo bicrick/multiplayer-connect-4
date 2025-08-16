@@ -57,20 +57,20 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-black flex items-center justify-center p-3 sm:p-4">
+      <div className="w-full max-w-sm sm:max-w-md">
         {/* Simple Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-6xl font-bold text-white mb-2 tracking-wide font-mono">
+        <div className="text-center mb-6 sm:mb-8">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white mb-2 tracking-wide font-mono">
             CONNECT 4
           </h1>
-          <p className="text-gray-400 text-sm uppercase tracking-wider">
+          <p className="text-gray-400 text-xs sm:text-sm uppercase tracking-wider">
             Multiplayer
           </p>
         </div>
 
         {/* Simple Panel */}
-        <div className="bg-gray-900 border border-gray-700 rounded p-6">
+        <div className="bg-gray-900 border border-gray-700 rounded p-4 sm:p-6">
           {/* Username Input */}
           <div className="mb-4">
             <label className="block text-gray-300 text-xs font-bold mb-2 uppercase">
@@ -81,7 +81,7 @@ export default function Home() {
               placeholder="Enter name"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors"
+              className="w-full p-2 sm:p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors text-sm sm:text-base"
               disabled={loading}
             />
           </div>
@@ -90,7 +90,7 @@ export default function Home() {
           <button
             onClick={handleCreate}
             disabled={loading}
-            className="w-full bg-white text-black font-bold py-3 px-4 rounded hover:bg-gray-200 transition-colors disabled:opacity-50 mb-4"
+            className="w-full bg-white text-black font-bold py-2 sm:py-3 px-4 rounded hover:bg-gray-200 transition-colors disabled:opacity-50 mb-4 text-sm sm:text-base"
           >
             {loading ? (
               <div className="flex items-center justify-center">
@@ -120,14 +120,14 @@ export default function Home() {
                 placeholder="ABC123"
                 value={roomCode}
                 onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                className="flex-1 p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors font-mono"
+                className="flex-1 p-2 sm:p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors font-mono text-sm sm:text-base"
                 disabled={loading}
                 maxLength={6}
               />
               <button
                 onClick={handleJoin}
                 disabled={loading}
-                className="bg-gray-700 text-white font-bold px-4 py-3 rounded hover:bg-gray-600 transition-colors disabled:opacity-50"
+                className="bg-gray-700 text-white font-bold px-3 sm:px-4 py-2 sm:py-3 rounded hover:bg-gray-600 transition-colors disabled:opacity-50 text-sm sm:text-base"
               >
                 Join
               </button>

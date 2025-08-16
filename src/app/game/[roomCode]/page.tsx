@@ -36,6 +36,8 @@ export default function Game() {
   const [lastMove, setLastMove] = useState<{row: number, col: number, timestamp: number} | null>(null);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [sessionScore, setSessionScore] = useState<{player1Wins: number, player2Wins: number}>({player1Wins: 0, player2Wins: 0});
+  const lastProcessedWinner = useRef<string | null>(null);
   const soundFunctionsRef = useRef<{
     playPlaceSound: () => void;
     playWinSound: () => void;
@@ -121,15 +123,24 @@ export default function Game() {
   const handleResetGame = async () => {
     try {
       playResetSound();
+      
+      // Determine who should start next game (alternate from last starter)
+      const lastStarter = localStorage.getItem(`lastStarter_${roomCode}`) || '1';
+      const nextStarter = lastStarter === '1' ? '2' : '1';
+      
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reset', roomCode }),
+        body: JSON.stringify({ action: 'reset', roomCode, nextStarter: parseInt(nextStarter) }),
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       
+      // Store who started this new game
+      localStorage.setItem(`lastStarter_${roomCode}`, nextStarter);
+      
       setLastMove(null); // Clear any highlighting
+      lastProcessedWinner.current = null; // Reset winner tracking for new game
       // The real-time subscription will handle the update
     } catch (err) {
       console.error('Reset error:', err);
@@ -160,6 +171,21 @@ export default function Game() {
 
   useEffect(() => {
     const storedUsername = localStorage.getItem('username') || '';
+    
+    // Load session score from localStorage
+    const storedScore = localStorage.getItem(`sessionScore_${roomCode}`);
+    if (storedScore) {
+      try {
+        setSessionScore(JSON.parse(storedScore));
+      } catch {
+        // If parsing fails, keep default score
+      }
+    }
+    
+    // Initialize the starter tracking if it doesn't exist
+    if (!localStorage.getItem(`lastStarter_${roomCode}`)) {
+      localStorage.setItem(`lastStarter_${roomCode}`, '1');
+    }
 
     const fetchGame = async () => {
       try {
@@ -246,9 +272,31 @@ export default function Game() {
             
             // Check for game end and play win/lose sounds
             if (newGame.winner !== null && currentGame?.winner === null) {
-              if (newGame.winner === 0) {
-                // Tie - no sound for now
-              } else {
+              // Create a unique identifier for this game completion
+              const gameIdentifier = `${roomCode}_${Date.now()}_${newGame.winner}`;
+              
+              // Only process if we haven't already processed this exact win
+              if (lastProcessedWinner.current !== gameIdentifier) {
+                lastProcessedWinner.current = gameIdentifier;
+                
+                if (newGame.winner === 0) {
+                  // Tie - no score change
+                } else {
+                  // Update session score
+                  setSessionScore(prevScore => {
+                    const newScore = { ...prevScore };
+                    if (newGame.winner === 1) {
+                      newScore.player1Wins += 1;
+                    } else if (newGame.winner === 2) {
+                      newScore.player2Wins += 1;
+                    }
+                    
+                    // Store in localStorage to persist during session
+                    localStorage.setItem(`sessionScore_${roomCode}`, JSON.stringify(newScore));
+                    return newScore;
+                  });
+                }
+                
                 // Play win/lose sound based on stored player number
                 setTimeout(() => {
                   const currentPlayerNumber = localStorage.getItem('playerNumber');
@@ -389,12 +437,12 @@ export default function Game() {
   };
 
   if (error) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-black p-4">
-      <div className="bg-gray-900 border border-gray-700 rounded p-6 text-center">
-        <div className="text-red-400 text-xl mb-4">{error}</div>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-black p-3 sm:p-4">
+      <div className="bg-gray-900 border border-gray-700 rounded p-4 sm:p-6 text-center max-w-sm sm:max-w-md w-full">
+        <div className="text-red-400 text-lg sm:text-xl mb-4">{error}</div>
         <button
           onClick={() => router.push('/')}
-          className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition-colors"
+          className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 sm:py-3 px-4 sm:px-6 rounded transition-colors text-sm sm:text-base"
         >
           Back to Home
         </button>
@@ -407,22 +455,22 @@ export default function Game() {
   // Show join prompt if user needs to join
   if (showJoinPrompt) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-4">
-        <div className="w-full max-w-md">
+      <div className="min-h-screen bg-black flex items-center justify-center p-3 sm:p-4">
+        <div className="w-full max-w-sm sm:max-w-md">
           {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-6xl font-bold text-white mb-2 tracking-wide font-mono">
+          <div className="text-center mb-6 sm:mb-8">
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white mb-2 tracking-wide font-mono">
               CONNECT 4
             </h1>
-            <div className="bg-gray-900 border border-gray-700 rounded p-4 mb-4">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-white text-lg font-semibold">Room: {roomCode}</p>
+            <div className="bg-gray-900 border border-gray-700 rounded p-3 sm:p-4 mb-4">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+                <div className="text-center sm:text-left">
+                  <p className="text-white text-base sm:text-lg font-semibold">Room: {roomCode}</p>
                   <p className="text-gray-400 text-sm">{game.player1_username} is waiting for you!</p>
                 </div>
                 <button
                   onClick={copyGameUrl}
-                  className={`px-3 py-2 rounded-md font-mono text-xs transition-all duration-200 ${
+                  className={`px-2 sm:px-3 py-1 sm:py-2 rounded-md font-mono text-xs transition-all duration-200 whitespace-nowrap ${
                     copySuccess 
                       ? 'bg-green-600 text-white' 
                       : 'bg-cyan-600 hover:bg-cyan-500 text-white'
@@ -435,7 +483,7 @@ export default function Game() {
           </div>
 
           {/* Join Card */}
-          <div className="bg-gray-900 border border-gray-700 rounded p-6">
+          <div className="bg-gray-900 border border-gray-700 rounded p-4 sm:p-6">
             <div className="mb-4">
               <label className="block text-gray-300 text-xs font-bold mb-2 uppercase">
                 Player Name
@@ -445,7 +493,7 @@ export default function Game() {
                 placeholder="Enter your name"
                 value={joinUsername}
                 onChange={(e) => setJoinUsername(e.target.value)}
-                className="w-full p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors"
+                className="w-full p-2 sm:p-3 bg-black border border-gray-600 rounded text-white placeholder-gray-500 focus:border-white focus:outline-none transition-colors text-sm sm:text-base"
                 onKeyPress={(e) => e.key === 'Enter' && handleManualJoin()}
                 autoFocus
               />
@@ -453,14 +501,14 @@ export default function Game() {
 
             <button
               onClick={handleManualJoin}
-              className="w-full bg-white text-black font-bold py-3 px-4 rounded hover:bg-gray-200 transition-colors mb-4"
+              className="w-full bg-white text-black font-bold py-2 sm:py-3 px-4 rounded hover:bg-gray-200 transition-colors mb-4 text-sm sm:text-base"
             >
               Join Game
             </button>
 
             <button
               onClick={() => router.push('/')}
-              className="w-full bg-gray-700 text-white font-bold px-4 py-3 rounded hover:bg-gray-600 transition-colors"
+              className="w-full bg-gray-700 text-white font-bold px-4 py-2 sm:py-3 rounded hover:bg-gray-600 transition-colors text-sm sm:text-base"
             >
               Back to Home
             </button>
@@ -473,21 +521,21 @@ export default function Game() {
   const { board, player1_username, player2_username, current_turn, winner } = game;
 
   return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-black flex flex-col items-center justify-center p-1 sm:p-4">
       {/* Header */}
-      <div className="text-center mb-6">
-        <h1 className="text-5xl font-bold text-white mb-2 font-mono tracking-wider">
+      <div className="text-center mb-4 sm:mb-6">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white mb-2 font-mono tracking-wider">
           CONNECT 4
         </h1>
-        <div className="bg-gray-900 border border-gray-700 rounded px-4 py-3 inline-block">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-white font-mono text-sm">Room: {roomCode}</p>
+        <div className="bg-gray-900 border border-gray-700 rounded px-3 sm:px-4 py-2 sm:py-3 inline-block max-w-full">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-4">
+            <div className="text-center sm:text-left">
+              <p className="text-white font-mono text-xs sm:text-sm">Room: {roomCode}</p>
               <p className="text-gray-400 text-xs">Share this link with your friend!</p>
             </div>
             <button
               onClick={copyGameUrl}
-              className={`px-3 py-2 rounded-md font-mono text-xs transition-all duration-200 ${
+              className={`px-2 sm:px-3 py-1 sm:py-2 rounded-md font-mono text-xs transition-all duration-200 whitespace-nowrap ${
                 copySuccess 
                   ? 'bg-green-600 text-white' 
                   : 'bg-cyan-600 hover:bg-cyan-500 text-white'
@@ -499,72 +547,89 @@ export default function Game() {
         </div>
       </div>
 
+
+
       {/* Game Status & Turn Indicator */}
-      <div className="w-full max-w-2xl mb-6">
+      <div className="w-full max-w-2xl mb-4 sm:mb-6 px-2 sm:px-0">
         {winner !== null ? (
           <div className="text-center">
-            <div className="bg-white text-black font-bold text-2xl py-4 rounded border-2 border-gray-300 mb-4">
+            <div className="bg-white text-black font-bold text-lg sm:text-xl md:text-2xl py-3 sm:py-4 rounded border-2 border-gray-300 mb-4">
               {winner === 0 ? 'TIE GAME!' : `${winner === 1 ? player1_username : player2_username} WINS!`}
             </div>
             <button
               onClick={handleResetGame}
-              className="bg-gray-700 hover:bg-gray-600 text-white font-mono font-bold py-3 px-6 rounded transition-colors"
+              className="bg-gray-700 hover:bg-gray-600 text-white font-mono font-bold py-2 sm:py-3 px-4 sm:px-6 rounded transition-colors text-sm sm:text-base"
             >
               PLAY AGAIN
             </button>
           </div>
         ) : (
-          <div className="flex justify-between items-center bg-gray-900 border border-gray-700 rounded p-4">
+          <div className="flex flex-col sm:flex-row justify-between items-center bg-gray-900 border border-gray-700 rounded p-3 sm:p-4 gap-3 sm:gap-0">
             {/* Player 1 */}
-            <div className={`flex items-center space-x-3 p-3 rounded transition-all duration-300 ${
+            <div className={`flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 rounded transition-all duration-300 w-full sm:w-auto ${
               current_turn === 1 
                 ? 'bg-gray-800 border border-gray-600' 
                 : 'bg-gray-900 opacity-60'
             }`}>
-              <div className="w-8 h-8 bg-red-500 rounded-full border-2 border-red-400"></div>
-              <div>
-                <p className="text-white font-bold text-lg">{player1_username}</p>
-                <p className="text-gray-400 text-sm font-mono">RED</p>
+              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-red-500 rounded-full border-2 border-red-400"></div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-white font-bold text-sm sm:text-base md:text-lg">{player1_username}</p>
+                  {(sessionScore.player1Wins > 0 || sessionScore.player2Wins > 0) && (
+                    <span className="bg-red-900/50 border border-red-500/50 rounded px-1.5 py-0.5 text-red-200 font-mono text-xs font-bold">
+                      {sessionScore.player1Wins}
+                    </span>
+                  )}
+                </div>
+                <p className="text-gray-400 text-xs sm:text-sm font-mono">RED</p>
                 {current_turn !== 1 && playerNumber === 1 && (
                   <p className="text-gray-500 text-xs italic">Wait your turn</p>
                 )}
               </div>
               {current_turn === 1 && (
-                <div className="ml-2 text-white animate-pulse">
-                  <span className="text-2xl">▶</span>
+                <div className="ml-1 sm:ml-2 text-white animate-pulse">
+                  <span className="text-lg sm:text-2xl">▶</span>
                 </div>
               )}
             </div>
 
             {/* VS */}
-            <div className="text-gray-400 font-mono text-xl font-bold">VS</div>
+            <div className="text-gray-400 font-mono text-sm sm:text-xl font-bold sm:block hidden">VS</div>
+            <div className="text-gray-400 font-mono text-xs font-bold sm:hidden">VS</div>
 
             {/* Player 2 */}
-            <div className={`flex items-center space-x-3 p-3 rounded transition-all duration-300 ${
+            <div className={`flex items-center space-x-2 sm:space-x-3 p-2 sm:p-3 rounded transition-all duration-300 w-full sm:w-auto ${
               current_turn === 2 
                 ? 'bg-gray-800 border border-gray-600' 
                 : 'bg-gray-900 opacity-60'
             }`}>
               {current_turn === 2 && (
-                <div className="mr-2 text-white animate-pulse">
-                  <span className="text-2xl">◀</span>
+                <div className="mr-1 sm:mr-2 text-white animate-pulse">
+                  <span className="text-lg sm:text-2xl">◀</span>
                 </div>
               )}
-              <div className="text-right">
-                <p className="text-white font-bold text-lg">{player2_username || 'Waiting...'}</p>
-                <p className="text-gray-400 text-sm font-mono">YELLOW</p>
+              <div className="flex-1 text-left sm:text-right">
+                <div className="flex items-center gap-2 justify-start sm:justify-end">
+                  <p className="text-white font-bold text-sm sm:text-base md:text-lg">{player2_username || 'Waiting...'}</p>
+                  {(sessionScore.player1Wins > 0 || sessionScore.player2Wins > 0) && (
+                    <span className="bg-yellow-900/50 border border-yellow-500/50 rounded px-1.5 py-0.5 text-yellow-200 font-mono text-xs font-bold">
+                      {sessionScore.player2Wins}
+                    </span>
+                  )}
+                </div>
+                <p className="text-gray-400 text-xs sm:text-sm font-mono">YELLOW</p>
                 {current_turn !== 2 && playerNumber === 2 && (
                   <p className="text-gray-500 text-xs italic">Wait your turn</p>
                 )}
               </div>
-              <div className="w-8 h-8 bg-yellow-500 rounded-full border-2 border-yellow-400"></div>
+              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-yellow-500 rounded-full border-2 border-yellow-400"></div>
             </div>
           </div>
         )}
       </div>
 
       {/* Game Board */}
-      <div className="bg-blue-600 p-3 rounded-xl border-4 border-blue-400 shadow-2xl mb-6 relative overflow-hidden">
+      <div className="bg-blue-600 p-2 sm:p-3 rounded-lg sm:rounded-xl border-2 sm:border-4 border-blue-400 shadow-2xl mb-4 sm:mb-6 relative overflow-hidden w-full max-w-lg mx-auto">
         {/* Noise/static overlay */}
         <div className="absolute inset-0 opacity-10 pointer-events-none">
           <div className="w-full h-full" style={{
@@ -574,9 +639,9 @@ export default function Game() {
           }}></div>
         </div>
         
-        <div className="grid grid-cols-7 gap-2 relative z-10">
+        <div className="grid grid-cols-7 gap-1 sm:gap-2 relative z-10">
           {board[0].map((_: number, col: number) => (
-            <div key={col} className="flex flex-col gap-2 relative">
+            <div key={col} className="flex flex-col gap-1 sm:gap-2 relative">
               {board.map((row: number[], rowIdx: number) => {
                 const piece = row[col];
                 const isLastMove = lastMove && lastMove.row === rowIdx && lastMove.col === col;
@@ -589,7 +654,7 @@ export default function Game() {
                 
                 if (piece === 0) { // Empty slot
                   if (isMyTurn) {
-                    hoverStyles = 'hover:shadow-xl hover:bg-gradient-to-br hover:from-white hover:to-gray-100 hover:scale-105';
+                    hoverStyles = 'hover:shadow-xl hover:bg-gradient-to-br hover:from-white hover:to-gray-100 hover:scale-105 active:scale-95';
                     cursorStyle = 'cursor-pointer';
                   } else if (isNotMyTurn) {
                     hoverStyles = 'hover:bg-red-100 hover:border-red-400 hover:shadow-lg hover:shadow-red-500/30';
@@ -605,12 +670,12 @@ export default function Game() {
                   <div
                     key={rowIdx}
                     onClick={() => handleMove(col)}
-                    className={`w-14 h-14 rounded-full border-2 transition-all duration-300 relative ${
+                    className={`w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-full border border-gray-300 sm:border-2 transition-all duration-300 relative ${
                       piece === 0 
-                        ? `bg-white border-gray-300 ${hoverStyles}` 
+                        ? `bg-white ${hoverStyles}` 
                         : piece === 1 
-                          ? `bg-red-500 border-red-400 shadow-lg shadow-red-500/50 ${isLastMove ? 'ring-4 ring-red-300 ring-opacity-75 scale-110' : ''}` 
-                          : `bg-yellow-500 border-yellow-400 shadow-lg shadow-yellow-500/50 ${isLastMove ? 'ring-4 ring-yellow-300 ring-opacity-75 scale-110' : ''}`
+                          ? `bg-red-500 border-red-400 shadow-lg shadow-red-500/50 ${isLastMove ? 'ring-2 sm:ring-4 ring-red-300 ring-opacity-75 scale-110' : ''}` 
+                          : `bg-yellow-500 border-yellow-400 shadow-lg shadow-yellow-500/50 ${isLastMove ? 'ring-2 sm:ring-4 ring-yellow-300 ring-opacity-75 scale-110' : ''}`
                     } ${cursorStyle}`}
                   />
                 );
@@ -640,7 +705,7 @@ export default function Game() {
       {/* Back Button */}
       <button
         onClick={() => router.push('/')}
-        className="bg-gray-700 hover:bg-gray-600 text-white font-mono font-bold py-3 px-6 rounded border border-gray-600 transition-colors"
+        className="bg-gray-700 hover:bg-gray-600 text-white font-mono font-bold py-2 sm:py-3 px-4 sm:px-6 rounded border border-gray-600 transition-colors text-sm sm:text-base"
       >
         ← BACK TO HOME
       </button>

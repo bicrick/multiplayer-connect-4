@@ -12,7 +12,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function POST(request: Request) {
-  const { action, username, roomCode } = await request.json();
+  const { action, username, roomCode, nextStarter } = await request.json();
 
   if (action === 'create') {
     const roomCodeGenerated = uuidv4().slice(0, 6).toUpperCase(); // Short unique code
@@ -61,13 +61,16 @@ export async function POST(request: Request) {
 
     if (error || !data) return NextResponse.json({ error: 'Room not found' }, { status: 404 });
 
-    // Reset the game board and turn, but keep players
+    // Reset the game board and use the provided starting player
     const initialBoard = Array(6).fill(null).map(() => Array(7).fill(0));
+    // Use the nextStarter provided by the client, defaulting to player 1 if not specified
+    const newStartingPlayer = nextStarter || 1;
+    
     const { data: updated, error: updateError } = await supabase
       .from('games')
       .update({ 
         board: initialBoard,
-        current_turn: 1,
+        current_turn: newStartingPlayer,
         winner: null
       })
       .eq('room_code', roomCode)
