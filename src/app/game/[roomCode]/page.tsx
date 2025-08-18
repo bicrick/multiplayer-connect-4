@@ -354,6 +354,7 @@ export default function Game() {
 
   const copyGameUrl = async () => {
     try {
+      // Always use the current browser URL (production URL)
       const gameUrl = window.location.href;
       await navigator.clipboard.writeText(gameUrl);
       setCopySuccess(true);
@@ -369,6 +370,7 @@ export default function Game() {
       try {
         document.execCommand('copy');
         setCopySuccess(true);
+        playClickSound(); // Play click sound for fallback too
         setTimeout(() => setCopySuccess(false), 2000);
       } catch (fallbackErr) {
         console.error('Fallback copy failed:', fallbackErr);
