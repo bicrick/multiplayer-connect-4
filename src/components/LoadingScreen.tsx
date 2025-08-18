@@ -40,30 +40,13 @@ export default function LoadingScreen({
           {message}
         </div>
 
-        {/* Animated dots */}
-        <div className="flex justify-center mt-2 space-x-1">
-          {[...Array(3)].map((_, i) => (
-            <div
-              key={i}
-              className={`w-2 h-2 rounded-full ${
-                fullScreen ? 'bg-gray-400' : 'bg-gray-500'
-              }`}
-              style={{
-                animation: `bounce 1.4s ease-in-out ${i * 0.2}s infinite`,
-              }}
-            />
-          ))}
-        </div>
+
       </div>
 
       <style jsx>{`
         @keyframes pulse {
           0%, 100% { opacity: 0.3; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.1); }
-        }
-        @keyframes bounce {
-          0%, 80%, 100% { transform: translateY(0); }
-          40% { transform: translateY(-8px); }
         }
       `}</style>
     </div>
